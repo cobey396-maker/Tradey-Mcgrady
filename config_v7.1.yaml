@@ -1,0 +1,196 @@
+# ============================================================================
+# Futures prop-firm day-trading bot configuration
+# ----------------------------------------------------------------------------
+# Every strategy threshold and every risk limit lives here. Prop-firm limits are
+# treated as HARD constraints by the code, not suggestions.
+# SECRETS DO NOT GO IN THIS FILE — API keys are read from environment variables
+# (see .env.example). This file is safe to commit; your .env is NOT.
+# ============================================================================
+
+# ============================================================================
+# DEFAULT = "V7.1" — best validated configuration so far (2026-07-20).
+# ORB, 5m, 6 instruments with max 3 concurrent, 0.25% risk each, 0.75R target.
+# 60d result: +$1,428, 87 trades, 67.8% win rate, PF 1.63, 4 of 5 periods positive.
+# NOT PROVEN: still only 60 days, still short of the $3,000 target, and selected
+# after testing many variants on this same window. 60 days cannot separate a
+# normal drawdown from regime-dependence. Do not fund this without multi-year
+# data or a forward test.
+# ============================================================================
+
+# --- Strategy selection ------------------------------------------------------
+strategy:
+  name: "orb"                # "market_structure" or "orb" (opening range breakout)
+
+# --- Instrument (futures contract spec) -------------------------------------
+# point_value is derived as tick_value / tick_size. MES = $5/point.
+instrument:
+  symbol: "MES"              # MES, ES, MNQ, NQ, ... (see src/instrument.py registry)
+  # Optional overrides if trading something not in the registry:
+  # tick_size: 0.25
+  # tick_value: 1.25
+timeframe: "5m"              # informational label for logs/plots
+
+# --- Swing / pivot detection (rule 1) ---------------------------------------
+pivots:
+  left_bars: 3
+  right_bars: 3              # a pivot only CONFIRMS this many bars later (no look-ahead)
+
+# --- Market structure (rule 2) ----------------------------------------------
+structure:
+  min_higher_highs: 2
+  min_higher_lows: 2
+
+# --- Trade direction ---------------------------------------------------------
+# The strategy is symmetric: bullish structure -> longs, bearish structure -> shorts.
+direction:
+  long: true
+  short: true                # V7 trades breakouts both ways
+
+# --- Entry / setup (rules 3-4) ----------------------------------------------
+entry:
+  require_pullback: true
+  breakout_confirm: "close"  # "close" = enter on close above level; "wick" = high touches level
+
+# --- Trend / regime filter (EMA level gate) ---------------------------------
+# Suppress longs below / shorts above an EMA of closes.
+trend_filter:
+  enabled: false             # superseded by momentum_filter below; leave off to compare
+  ema_period: 200
+
+# --- Time-series momentum filter (the edge source on top of structure) -------
+# Only take a long when the instrument's own momentum is UP over the lookback(s),
+# and a short only when it's DOWN. Multi-horizon agreement is the robustness lever.
+# Based on Moskowitz, Ooi & Pedersen (2012), "Time Series Momentum".
+momentum_filter:
+  enabled: true
+  lookbacks: [50, 100, 200]  # bars of the traded timeframe; require agreement per `mode`
+  mode: "all"                # "all" | "majority" | "any"
+  min_strength: 0.0          # 0 = sign only; >0 = volatility-scaled momentum must exceed this
+  vol_window: 100            # bars of returns used for the volatility scaling
+
+# --- Stop loss (rule 5) ------------------------------------------------------
+stop:
+  buffer_ticks: 1            # stop this many TICKS beyond the structure/range basis
+  min_stop_ticks: 4          # reject setups with a tighter stop (noise trades)
+
+# --- Take profit (rule 6) ----------------------------------------------------
+take_profit:
+  mode: "fixed_r"            # "fixed_r" | "trailing" | "none" (ride to session close)
+  # 0.75R beat 1R/1.5R/2R/3R on win rate, net P&L, expectancy AND consistency.
+  # These breakouts make a modest move then revert — a far target gives it back.
+  # Breakeven win rate at 0.75R = 57.1%; measured 67.8% (≈10pt margin).
+  r_multiple: 0.75
+
+# --- Stepped stop (dollar-based breakeven / lock overlay) --------------------
+# When OPEN profit ($) reaches `trigger`, move the stop to lock `lock` dollars
+# (lock: 0 = breakeven). Applied on each bar's favourable move, effective next bar.
+# V7 uses R-mode: move to breakeven once the trade is 1R in profit. A dollar-based
+# breakeven at ~0.2R scratched winners and measurably HURT results — keep this in R.
+stop_steps:
+  enabled: true
+  mode: "r"                  # "r" = trigger/lock in R multiples | "dollar" = in $
+  steps:
+    - {trigger: 1.0, lock: 0.0}   # at +1R, stop -> breakeven
+
+# --- Opening Range Breakout (used when strategy.name: orb) -------------------
+# Use an intraday timeframe (e.g. 5m) — bars must be shorter than opening_minutes.
+orb:
+  session_open: "09:30"      # true RTH open; opening range starts here
+  opening_minutes: 30        # V7: 30-min range. (15m was too tight -> 13% win rate)
+  stop_mode: "range"         # V7: FULL opposite side. ("fraction" sat inside the retest noise)
+  stop_fraction: 0.5         # only used when stop_mode: fraction
+  buffer_ticks: 1            # break must exceed the OR level by this many ticks
+  one_trade_per_day: true    # take only the first breakout each session
+  breakout_confirm: "close"  # "close" or "wick"
+
+# --- Position sizing / per-trade risk (rule 7 area) -------------------------
+risk:
+  risk_per_trade_pct: 0.25   # V7: 0.25% ($125 on $50k). 0.5% x 6 concurrent blew the account.
+  max_contracts: 10          # hard cap on contracts per trade (prop firms limit this)
+  max_open_positions: 1      # per-instrument (single-instrument engine)
+  max_concurrent_positions: 3  # V7: portfolio-wide cap. 6 concurrent was the account-killer —
+                               # correlated index futures all lose together.
+  max_trades_per_day: 0      # 0 = unlimited (ORB self-limits to 1 breakout/instrument/day)
+
+# --- Session filter (rule 8) ------------------------------------------------
+# Futures trade nearly 24h; restrict to your chosen RTH window. Times are in the
+# session timezone below. flatten_at_end closes any open position at session end.
+session:
+  enabled: true
+  timezone: "America/New_York"
+  start: "09:35"
+  end: "15:55"
+  flatten_at_end: true
+
+# ============================================================================
+# PROP FIRM COMPLIANCE — modeled on Topstep (verified 2026-07-13).
+# These are HARD kill-switches. When breached, the bot halts new entries and the
+# backtest flags the evaluation as FAILED.
+# ============================================================================
+prop_firm:
+  name: "Topstep"
+  account_size: 50000.0      # starting balance of the combine/account
+
+  # Daily Loss Limit: measured from START-OF-DAY balance. Hitting it locks the
+  # account for the rest of that session. (Topstep 50K default ≈ $1,000.)
+  daily_loss_limit: 1000.0
+
+  # Trailing Maximum Loss Limit (MLL) — Topstep model:
+  #   * initial floor   = account_size - trailing_drawdown
+  #   * floor trails UP on END-OF-DAY balance growth only (never on intraday peaks),
+  #     and never moves down
+  #   * breach is checked INTRADAY on live equity INCLUDING unrealized P&L
+  #   * once the floor trails up to account_size (starting balance), it LOCKS there
+  trailing_drawdown: 2000.0  # Topstep 50K default
+  trailing_basis: "eod_balance"   # "eod_balance" (Topstep) — do not change unless your firm differs
+  lock_at_start_balance: true     # Topstep: floor stops trailing once it reaches the start balance
+
+  # Optional evaluation targets (used for the survival REPORT only — informational,
+  # never used to disguise or bypass anything).
+  profit_target: 3000.0      # Topstep 50K combine profit target
+  min_trading_days: 2
+
+# --- Backtest realism (Phase 1) ---------------------------------------------
+backtest:
+  commission_per_contract: 1.24   # $ per contract per side (round-turn ≈ 2x). Verify with your broker.
+  slippage_ticks: 1               # ticks of slippage applied against you per fill
+  data_source: "csv"              # "csv" | "yfinance" | "databento" | "polygon"
+  csv_path: "data/real_MES_5m.csv"
+  resample: "5min"                # applied to databento/polygon 1m pulls (null to keep native)
+  yf_symbol: "MES=F"
+  yf_period: "60d"
+  yf_interval: "5m"
+  # Databento (paid per-download). Symbol comes from instrument.symbol above.
+  # First run caches to cache_csv; later runs reuse it (no re-charge).
+  databento:
+    dataset: "GLBX.MDP3"
+    roll: "v"                     # v=volume, c=calendar, n=open-interest
+    schema: "ohlcv-1m"
+    start: "2021-01-01"
+    end: "2024-12-31"
+    allow_download: false         # cost gate: must be true to hit the paid API on a cache miss
+    cache_csv: "data/cache/databento_mes_5m.csv"
+  # Polygon/Massive (flat-rate). Stitches quarterly contracts into a continuous series.
+  polygon:
+    start: "2021-01-01"
+    end: "2024-12-31"
+    multiplier: 1
+    timespan: "minute"
+    roll_days_before: 8
+    # contract: "MESZ4"           # set to fetch ONE specific contract instead of stitching
+    cache_csv: "data/cache/polygon_mes_5m.csv"
+
+# --- Order handling (Phase 2 — sane, non-spammy retries) --------------------
+order_handling:
+  max_retries: 2             # on requote/rejection, retry at most this many times
+  retry_cooldown_sec: 2.0    # wait between retries (no tight loops, no HFT spamming)
+
+# --- Execution mode ----------------------------------------------------------
+# demo -> Tradovate DEMO (simulated). live -> REAL money (disabled scaffold).
+execution:
+  mode: "demo"               # "demo" or "live"
+  venue: "tradovate"
+  is_automated: true         # CME Rule 575: automated orders must be flagged (verify current API field)
+  live:
+    enabled: false           # <-- hard OFF. Must be true AND runtime-confirmed to ever arm.
+    i_understand_the_risk: false

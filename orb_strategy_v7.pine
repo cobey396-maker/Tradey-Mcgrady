@@ -1,0 +1,138 @@
+//@version=6
+// ============================================================================
+// ORB "V7" — Opening Range Breakout, STRATEGY version for TradingView
+// ----------------------------------------------------------------------------
+// Mirrors the Python bot's current default config (config.yaml, 2026-07-20):
+//   30-min opening range (09:30-10:00) · 5-minute bars · break of the range
+//   stop = FULL opposite side of the range · 0.75R target · breakeven at 1R
+//   both directions · 0.25% risk per trade · session 09:35-15:55, flat by close
+//
+// Backtest result of this config in the Python engine (6 micro futures, one
+// shared $50k account, max 3 concurrent, ~60 days): +$1,428 over 87 trades,
+// 67.8% win rate, PF 1.63, 4 of 5 sub-periods positive.
+//
+// Why 0.75R and not 2R: these breakouts make a modest move then revert, so a far
+// target hands the move back. 0.75R beat 1R/1.5R/2R/3R on win rate, P&L,
+// expectancy AND consistency. Breakeven win rate at 0.75R is 57.1%.
+//
+// ⚠️ NOT PROVEN. Only 60 days, still short of the $3,000 profit target, and
+// selected after testing many variants on that same window. 60 days cannot
+// distinguish a normal drawdown from a regime fluke. Forward-test first.
+//
+// ⚠️ ONE-CHART LIMITATION: TradingView runs this per symbol. The Python version's
+// portfolio risk controls — one shared balance, max 3 concurrent positions across
+// instruments, and the account-level trailing drawdown — CANNOT be modelled here.
+// If you run it on 6 charts you are taking 6x the exposure this script "sees".
+//
+// Costs are baked in below. Do NOT zero them out.
+// ============================================================================
+strategy("ORB V7 [strategy]", overlay = true,
+     initial_capital         = 50000,
+     currency                = currency.USD,
+     default_qty_type        = strategy.fixed,
+     commission_type         = strategy.commission.cash_per_contract,
+     commission_value        = 1.24,     // per contract per side — verify with your broker
+     slippage                = 1,        // ticks against you per fill
+     process_orders_on_close = true,
+     calc_on_every_tick      = false)
+
+// ===== Inputs =================================================================
+gO = "Opening range"
+sessOpen  = input.session("0930-1000", "Opening range window", group = gO)
+gE = "Entry / exit"
+bufTicks  = input.int(1,   "Breakout buffer (ticks)", minval = 0, group = gE)
+rMult     = input.float(0.75, "Take-profit R multiple", minval = 0.1, step = 0.05, group = gE)
+beAtR     = input.float(1.0, "Move stop to breakeven at (R)", minval = 0.1, step = 0.1, group = gE)
+useBE     = input.bool(true, "Enable breakeven step", group = gE)
+oncePerDay= input.bool(true, "Only first breakout each day", group = gE)
+goLong    = input.bool(true, "Trade upside breaks",   group = gE)
+goShort   = input.bool(true, "Trade downside breaks", group = gE)
+gR = "Risk"
+riskPct   = input.float(0.25, "Risk % of equity per trade", minval = 0.05, step = 0.05, group = gR)
+maxCon    = input.int(10, "Max contracts", minval = 1, group = gR)
+gS = "Session"
+tradeSess = input.session("0935-1555", "Trading session", group = gS)
+flatEnd   = input.bool(true, "Flatten at session end", group = gS)
+
+// ===== Session state ==========================================================
+inOR    = not na(time(timeframe.period, sessOpen))     // inside the opening range
+inTrade = not na(time(timeframe.period, tradeSess))    // allowed to hold/enter
+sessEnd = flatEnd and not inTrade and inTrade[1]
+newDay  = ta.change(time("D")) != 0
+
+// ===== Build the opening range ================================================
+var float orHigh = na
+var float orLow  = na
+var bool  orDone = false
+var bool  traded = false
+
+if newDay
+    orHigh := na
+    orLow  := na
+    orDone := false
+    traded := false
+
+if inOR
+    orHigh := na(orHigh) ? high : math.max(orHigh, high)
+    orLow  := na(orLow)  ? low  : math.min(orLow,  low)
+else if not na(orHigh)
+    orDone := true
+
+buf = bufTicks * syminfo.mintick
+
+// ===== Entries ================================================================
+var float entryStop = na
+var float entryTgt  = na
+var float initRisk  = na
+
+canTrade = orDone and inTrade and strategy.position_size == 0 and (not oncePerDay or not traded)
+
+longBreak  = canTrade and goLong  and close > orHigh + buf
+shortBreak = canTrade and goShort and close < orLow  - buf
+
+if longBreak or shortBreak
+    d    = longBreak ? 1 : -1
+    // stop = FULL opposite side of the range (the half-range stop tested much worse)
+    stp  = longBreak ? orLow - buf : orHigh + buf
+    risk = math.abs(close - stp)
+    if risk > 0
+        riskDollars = strategy.equity * riskPct / 100.0
+        qty = math.floor(riskDollars / (risk * syminfo.pointvalue))
+        qty := math.min(math.max(qty, 0), maxCon)
+        if qty > 0
+            entryStop := stp
+            initRisk  := risk
+            entryTgt  := longBreak ? close + rMult * risk : close - rMult * risk
+            traded    := true
+            if longBreak
+                strategy.entry("L", strategy.long, qty = qty)
+            else
+                strategy.entry("S", strategy.short, qty = qty)
+
+// ===== Exits: 2R target, stop, breakeven at 1R ================================
+if strategy.position_size != 0 and not na(entryStop)
+    curStop = entryStop
+    if useBE and not na(initRisk)
+        avg  = strategy.position_avg_price
+        prog = strategy.position_size > 0 ? (high - avg) / initRisk : (avg - low) / initRisk
+        if prog >= beAtR
+            be = avg
+            better = strategy.position_size > 0 ? be > curStop : be < curStop
+            if better
+                curStop   := be
+                entryStop := be          // ratchet only
+    if strategy.position_size > 0
+        strategy.exit("X-L", from_entry = "L", stop = curStop, limit = entryTgt)
+    else
+        strategy.exit("X-S", from_entry = "S", stop = curStop, limit = entryTgt)
+
+// flat by close — load-bearing: holding overnight breaches the trailing drawdown
+if sessEnd and strategy.position_size != 0
+    strategy.close_all(comment = "session-end")
+
+// ===== Plots ==================================================================
+plot(orDone and not na(orHigh) ? orHigh : na, "OR high", color.new(color.blue, 0), style = plot.style_linebr)
+plot(orDone and not na(orLow)  ? orLow  : na, "OR low",  color.new(color.blue, 0), style = plot.style_linebr)
+plot(strategy.position_size != 0 ? entryStop : na, "Stop",   color.new(color.red, 0),  style = plot.style_linebr)
+plot(strategy.position_size != 0 ? entryTgt  : na, "Target", color.new(color.teal, 0), style = plot.style_linebr)
+bgcolor(inOR ? color.new(color.blue, 90) : na, title = "Opening range")

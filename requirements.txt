@@ -1,0 +1,19 @@
+# --- Phase 1: backtesting (required) ---
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+PyYAML>=6.0
+pytest>=7.4
+
+# --- Optional data sources for Phase 1 ---
+yfinance>=0.2.40          # free historical data (e.g. MES=F); 5m capped at ~60d
+# databento>=0.34         # paid per-download, multi-year CME intraday (data/fetch_databento.py)
+# massive                 # Polygon/Massive client, flat-rate futures (data/fetch_polygon.py)
+
+# --- Phase 2: demo webhook server ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+requests>=2.31            # Tradovate REST (verified against docs 2026-07-13)
+python-dotenv>=1.0
+httpx>=0.27              # used by fastapi TestClient in the server tests

@@ -1,0 +1,100 @@
+//@version=6
+// ============================================================================
+// ORB "V7.1" — webhook ALERTS version (TradingView -> your server -> Tradovate)
+// ----------------------------------------------------------------------------
+// Fires JSON matching the Phase 2 server's /webhook schema:
+//   entry: {"secret","action":"long"|"short","symbol","price","stop","take_profit"}
+//   exit:  {"secret","action":"close","symbol","price"}
+//
+// TradingView is the BRAIN (finds the breakout + the structural stop). The server
+// is the HANDS: it re-checks the prop-firm kill-switches, computes position size
+// itself, and enforces the PORTFOLIO concurrency cap across all symbols.
+//
+// Mirrors config.yaml V7.1: 30-min opening range (09:30-10:00), 5m bars,
+// stop = FULL opposite side of the range, 0.75R target, both directions,
+// one breakout per instrument per day, session 09:35-15:55.
+//
+// Run this on EACH instrument you want traded (MES, MNQ, M2K, MGC, MCL, MYM) with
+// its own alert. The server caps how many can be open at once — that cap is the
+// thing keeping six simultaneous alerts from becoming six simultaneous losses.
+//
+// Keep this script PRIVATE — it holds your webhook secret.
+// ============================================================================
+indicator("ORB V7.1 -> Webhook", overlay = true)
+
+gO = "Opening range"
+sessOpen   = input.session("0930-1000", "Opening range window", group = gO)
+gE = "Entry"
+bufTicks   = input.int(1,   "Breakout buffer (ticks)", minval = 0, group = gE)
+rMult      = input.float(0.75, "Take-profit R multiple", minval = 0.1, step = 0.05, group = gE)
+oncePerDay = input.bool(true, "Only first breakout each day", group = gE)
+goLong     = input.bool(true, "Trade upside breaks",   group = gE)
+goShort    = input.bool(true, "Trade downside breaks", group = gE)
+gS = "Session"
+tradeSess  = input.session("0935-1555", "Trading session", group = gS)
+gW = "Webhook"
+ordSym     = input.string("MES", "Order symbol (exactly as Tradovate expects)", group = gW)
+secret     = input.string("",    "Webhook secret (must match WEBHOOK_SECRET)", group = gW)
+sendClose  = input.bool(true, "Send close alert at session end", group = gW)
+
+inOR    = not na(time(timeframe.period, sessOpen))
+inTrade = not na(time(timeframe.period, tradeSess))
+sessEnd = not inTrade and inTrade[1]
+newDay  = ta.change(time("D")) != 0
+
+var float orHigh = na
+var float orLow  = na
+var bool  orDone = false
+var bool  traded = false
+var bool  inPos  = false
+
+if newDay
+    orHigh := na
+    orLow  := na
+    orDone := false
+    traded := false
+
+if inOR
+    orHigh := na(orHigh) ? high : math.max(orHigh, high)
+    orLow  := na(orLow)  ? low  : math.min(orLow,  low)
+else if not na(orHigh)
+    orDone := true
+
+buf = bufTicks * syminfo.mintick
+
+f_entry(string act, float px, float stp, float tgt) =>
+    '{"secret":"' + secret + '","action":"' + act + '","symbol":"' + ordSym +
+      '","price":' + str.tostring(px, format.mintick) +
+      ',"stop":'   + str.tostring(stp, format.mintick) +
+      ',"take_profit":' + str.tostring(tgt, format.mintick) + '}'
+f_close(float px) =>
+    '{"secret":"' + secret + '","action":"close","symbol":"' + ordSym +
+      '","price":' + str.tostring(px, format.mintick) + '}'
+
+canTrade   = orDone and inTrade and not inPos and (not oncePerDay or not traded)
+longBreak  = canTrade and goLong  and close > orHigh + buf
+shortBreak = canTrade and goShort and close < orLow  - buf
+
+if longBreak or shortBreak
+    d    = longBreak ? 1 : -1
+    stp  = longBreak ? orLow - buf : orHigh + buf     // FULL opposite side of range
+    risk = math.abs(close - stp)
+    if risk > 0
+        tgt = longBreak ? close + rMult * risk : close - rMult * risk
+        traded := true
+        inPos  := true
+        alert(f_entry(longBreak ? "long" : "short", close, stp, tgt),
+              alert.freq_once_per_bar_close)
+
+// Safety-net close at session end (the broker bracket normally exits first;
+// this also resets local state so tomorrow's breakout can arm).
+if sessEnd and inPos
+    inPos := false
+    if sendClose
+        alert(f_close(close), alert.freq_once_per_bar_close)
+
+plotshape(longBreak,  "Long break",  shape.triangleup,   location.belowbar, color.new(color.green, 0),  size = size.small)
+plotshape(shortBreak, "Short break", shape.triangledown, location.abovebar, color.new(color.purple, 0), size = size.small)
+plot(orDone and not na(orHigh) ? orHigh : na, "OR high", color.new(color.blue, 0), style = plot.style_linebr)
+plot(orDone and not na(orLow)  ? orLow  : na, "OR low",  color.new(color.blue, 0), style = plot.style_linebr)
+bgcolor(inOR ? color.new(color.blue, 90) : na, title = "Opening range")
