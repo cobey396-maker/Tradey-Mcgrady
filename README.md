@@ -16,8 +16,10 @@ cp strategies/v7.1/config_v7.1.yaml config.yaml
 RTH session (09:30–10:00 ET). When price closes beyond that range (either
 direction), take the trade. Stop goes on the **full opposite side of the range** —
 if price crosses the entire range against you, the breakout clearly failed. Target
-is **0.75R**. Move the stop to **breakeven once the trade is 1R in profit**. One
-breakout per instrument per day, everything flat by 15:55.
+is **0.75R**. One breakout per instrument per day, everything flat by 15:55.
+(The config also carries a breakeven step at +1R — see the note below: it can
+never fire behind a 0.75R target, so the measured results are from a system with
+no breakeven step at all.)
 
 ## Exact settings
 
@@ -30,7 +32,7 @@ breakout per instrument per day, everything flat by 15:55.
 | Direction | both long and short |
 | Stop | full opposite side of range |
 | Target | 0.75R |
-| Breakeven step | at +1R (R-mode) |
+| Breakeven step | configured at +1R — **never fires**, see note |
 | Frequency | 1 breakout per instrument per day |
 | Instruments | MES, MNQ, M2K, MGC, MCL, MYM |
 | **Risk per trade** | **0.25%** ($125 on $50k) |
@@ -89,7 +91,11 @@ Period breakdown (fresh $50k each, ~12 days per period):
 - **0.75R target, not 2R** — these breakouts make a modest move then revert. 0.75R
   beat 1R/1.5R/2R/3R on win rate, P&L, expectancy **and** consistency.
 - **Breakeven at 1R, not at a small $ amount** — a dollar-based breakeven at ~0.2R
-  scratched winners and measurably hurt results.
+  scratched winners and measurably hurt results. ⚠️ **But the 1R step is
+  unreachable**: open profit cannot reach 1R because the 0.75R target fills first.
+  The step never fires, so every measured result above came from a system with no
+  breakeven step. A breakeven step has therefore never actually been tested on
+  this strategy — see [docs/FREQUENT_TRADING.md](docs/FREQUENT_TRADING.md) §4.
 - **Daily loss limit ON** — with it off there is no circuit breaker, and losses
   compound into a trailing-drawdown termination.
 
@@ -120,6 +126,28 @@ authority on risk.
 
 **Live demo (Tradovate):** use `orb_alerts_v7.pine` + `run_demo_server.py`.
 See `tradingview/README.md`.
+
+## Monitoring it
+
+```bash
+python run_dashboard.py --demo     # try the UI with synthetic data
+python run_dashboard.py            # read output/trades.csv + config.yaml
+```
+
+A read-only web dashboard at <http://127.0.0.1:8080>: equity against the
+prop firm's trailing-drawdown floor, friction in R and the win rate it demands,
+the realised-R distribution, rolling win rate against breakeven, daily P&L
+against the loss limit, and the blotter. See [docs/DASHBOARD.md](docs/DASHBOARD.md).
+
+## Trading it more often
+
+`config_v8_scalp.yaml` is an **unvalidated** higher-frequency variant: 5-minute
+opening range, up to 3 breakouts per instrument per day, 1.0R target, 0.15% risk.
+It buys frequency with more setups per day rather than tighter stops, because
+friction is charged per trade — a 10-tick MES stop pays ~0.40R in costs and needs
+a 70% win rate at a 1R target just to break even. The reasoning, the cost tables,
+and the sequence of tests that would falsify it are in
+[docs/FREQUENT_TRADING.md](docs/FREQUENT_TRADING.md). **It has never been run.**
 
 ## The one thing that would settle it
 

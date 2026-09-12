@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradeyMcGrady — bot dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d1117'/%3E%3Cpath d='M2 12l3.5-4 3 2.5L13 4' stroke='%233fb950' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>TradeyMcGrady <small id="strategy-line">loading…</small></h1>
+    <div class="badges" id="badges"></div>
+  </header>
+
+  <div id="notices"></div>
+
+  <div class="controls">
+    <label for="f-symbol">Symbol</label>
+    <select id="f-symbol"><option value="">All</option></select>
+    <label for="f-since">Since</label>
+    <input type="date" id="f-since">
+    <button id="btn-reset">Reset</button>
+    <button id="btn-refresh">Refresh</button>
+    <label><input type="checkbox" id="f-auto" checked> auto every 15s</label>
+    <span class="muted" id="updated"></span>
+  </div>
+
+  <section class="grid kpis" id="kpis"></section>
+
+  <section class="grid cols-2" style="margin-top:12px">
+    <div class="card">
+      <h2>Equity vs trailing-drawdown floor</h2>
+      <div class="chart-box"><canvas id="c-equity" height="260"></canvas></div>
+      <p class="hint">The red line is the prop firm's trailing maximum-loss floor. It trails up on
+        end-of-day balance only and never moves down. Touching it ends the account — a rising equity
+        curve that stays close to its floor is still a fragile one. Closed-trade equity only:
+        real breaches are checked on live equity including open P&amp;L, so true headroom is lower.</p>
+    </div>
+
+    <div class="card">
+      <h2>Risk headroom</h2>
+      <div id="meters"></div>
+      <h2 style="margin-top:18px">Open positions</h2>
+      <div id="live-positions"></div>
+    </div>
+  </section>
+
+  <section class="grid cols-2" style="margin-top:12px">
+    <div class="card">
+      <h2>Cost of trading — the frequency tax</h2>
+      <div id="friction-kpis" class="grid kpis" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))"></div>
+      <div class="chart-box" style="margin-top:12px"><canvas id="c-winrate" height="150"></canvas></div>
+      <p class="hint" id="friction-hint"></p>
+    </div>
+
+    <div class="card">
+      <h2>Realised R distribution</h2>
+      <div class="chart-box"><canvas id="c-rhist" height="260"></canvas></div>
+      <p class="hint">Healthy shape: a spike at the target and a spike at −1R. A left tail beyond
+        −1R is stop slippage — the risk you thought you had capped, but did not.</p>
+    </div>
+  </section>
+
+  <section class="grid cols-2" style="margin-top:12px">
+    <div class="card">
+      <h2>Rolling 20-trade win rate</h2>
+      <div class="chart-box"><canvas id="c-rolling" height="220"></canvas></div>
+      <p class="hint" id="rolling-hint"></p>
+    </div>
+    <div class="card">
+      <h2>Daily P&amp;L</h2>
+      <div class="chart-box"><canvas id="c-daily" height="220"></canvas></div>
+      <p class="hint">Bars below the dashed line breached the daily loss limit — the account locks
+        for the rest of that session.</p>
+    </div>
+  </section>
+
+  <section class="grid cols-2" style="margin-top:12px">
+    <div class="card">
+      <h2>Per instrument</h2>
+      <div class="table-scroll"><table id="t-symbols"></table></div>
+    </div>
+    <div class="card">
+      <h2>By entry hour &amp; exit reason</h2>
+      <div class="table-scroll"><table id="t-hours"></table></div>
+      <div class="table-scroll" style="margin-top:14px"><table id="t-reasons"></table></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h2>Trade blotter</h2>
+    <div class="table-scroll tall"><table id="t-trades"></table></div>
+  </section>
+
+  <footer>
+    Read-only monitor — this dashboard never places, sizes or cancels an order.<br>
+    Backtested and demo numbers are not evidence of a live edge.
+  </footer>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
