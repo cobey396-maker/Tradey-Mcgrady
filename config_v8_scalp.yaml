@@ -1,0 +1,237 @@
+# ============================================================================
+# "V8-INTRADAY" — the higher-frequency variant of V7.1.       UNVALIDATED.
+# ----------------------------------------------------------------------------
+# V7.1 takes ONE trade per instrument per day off a 30-minute opening range.
+# That caps the system at ~6 trades/day and means a single bad opening print
+# decides the whole session. This config trades the same idea more often.
+#
+# READ docs/FREQUENT_TRADING.md BEFORE RUNNING THIS. The short version:
+#
+#   Commission and slippage are charged PER TRADE, not per dollar risked.
+#   Trading twice as often doubles the tax while the edge per trade stays
+#   the same. On MES a round turn costs $4.98 — about 4 ticks. Against a
+#   40-tick stop that is 10% of R; against a 10-tick stop it is 40% of R.
+#
+# So this config buys frequency the ONE way that does not also multiply the
+# tax per unit of risk: more setups per day, NOT tighter stops. The stop floor
+# (stop.min_stop_ticks) is the load-bearing line in this file. Lower it and the
+# arithmetic below stops working.
+#
+# NOTHING HERE HAS BEEN BACKTESTED. Every number is derived from the cost
+# arithmetic and from what V7.1 measured, not from a run of this config. It is
+# a hypothesis to test, not a configuration to fund.
+# ============================================================================
+
+strategy:
+  name: "orb"
+
+instrument:
+  symbol: "MES"
+timeframe: "1m"              # V7.1: 5m. 1m resolves the breakout ~4 bars sooner.
+
+# --- Swing / pivot detection (unused by ORB; kept so the file stays loadable) -
+pivots:
+  left_bars: 3
+  right_bars: 3
+
+structure:
+  min_higher_highs: 2
+  min_higher_lows: 2
+
+direction:
+  long: true
+  short: true
+
+entry:
+  require_pullback: true
+  breakout_confirm: "close"
+
+trend_filter:
+  enabled: false
+  ema_period: 200
+
+# --- Momentum gate, rescaled for 1m bars ------------------------------------
+# V7.1 used [50, 100, 200] bars of 5m = 250/500/1000 minutes. The same WALL-CLOCK
+# horizons on 1m bars are [250, 500, 1000] — but an RTH session is only 390 bars,
+# so a 1000-bar lookback reaches back two and a half sessions and gates out most
+# of the extra setups this config exists to take. These are the intraday horizons
+# (2h / 4h / one session) with "majority" instead of "all": a stricter gate on a
+# higher-frequency system is a contradiction — you are paying for trades you then
+# refuse to take.
+momentum_filter:
+  enabled: true
+  lookbacks: [120, 240, 390]
+  mode: "majority"           # V7.1: "all". See above.
+  min_strength: 0.0
+  vol_window: 390            # one session of 1m returns
+
+# --- Stop loss — THE load-bearing setting in this file ----------------------
+# min_stop_ticks is not a noise filter here, it is a cost floor. A round turn on
+# MES costs ~4 ticks; at a 40-tick stop that is 10% of R, and 10% of R is what
+# every breakeven-win-rate number in the comments below assumes.
+#
+#   stop 40 ticks -> friction 0.10R -> breakeven win rate at 1R target = 55.0%
+#   stop 20 ticks -> friction 0.20R -> breakeven win rate at 1R target = 60.0%
+#   stop 10 ticks -> friction 0.40R -> breakeven win rate at 1R target = 70.0%
+#
+# A "scalp" with a 10-tick stop needs to win 7 times in 10 just to break even.
+# That is the whole reason this config is not actually a scalper.
+stop:
+  buffer_ticks: 1
+  min_stop_ticks: 40         # V7.1: 4. Rejects any setup too tight to pay for itself.
+
+# --- Take profit — RAISED, not lowered --------------------------------------
+# The counter-intuitive one. Fixed per-trade friction eats a bigger share of a
+# small target than a large one: at f = 0.10R it adds 5.8 points to the breakeven
+# win rate of a 0.75R target but only 3.4 points to a 2R target. V7.1's 0.75R
+# target needs 62.9% wins after costs and measured 67.8% — a ~5 point margin that
+# worse real fills erase. At 1.0R the bar is 55.0%.
+#
+# This trades against V7.1's finding that these breakouts revert before 1R. That
+# finding came from 30-minute-range breakouts taken once a day; whether it holds
+# for later intraday breaks off a 5-minute range is exactly what the first sweep
+# of this config has to answer. If 1.0R measures worse than 0.75R on this
+# config's own data, the frequency idea is probably dead on micros at $1.24/side.
+take_profit:
+  mode: "fixed_r"
+  r_multiple: 1.0            # V7.1: 0.75
+
+# --- Stepped stop ------------------------------------------------------------
+# NOTE ON V7.1: its step is {trigger: 1.0R, lock: 0} against a 0.75R target — the
+# target always fills first, so that step can never fire. V7.1's documented
+# "breakeven at 1R" behaviour does not happen. Do not copy the pattern.
+#
+# 0.6R against a 1.0R target does fire. It will also scratch trades that would
+# have finished green, which is a real cost, not a free option — V7.1 measured a
+# too-early (~0.2R) breakeven actively hurting results. 0.6R is a guess at the
+# line between the two. Sweep {off, 0.5, 0.6, 0.75} before believing it.
+stop_steps:
+  enabled: true
+  mode: "r"
+  steps:
+    - {trigger: 0.6, lock: 0.0}
+
+# --- Opening range — this is where the frequency actually comes from --------
+orb:
+  session_open: "09:30"
+  opening_minutes: 5         # V7.1: 30. Range is set by 09:35 instead of 10:00.
+  stop_mode: "range"         # unchanged: full opposite side. "fraction" was 13% win rate.
+  stop_fraction: 0.5
+  buffer_ticks: 1
+  one_trade_per_day: false   # V7.1: true. THE change. Re-arms after each exit.
+  breakout_confirm: "close"
+
+# --- Risk — re-budgeted for the higher trade count ---------------------------
+# The daily loss limit is a fixed dollar wall. More trades per day means more
+# losers per day means the wall arrives sooner, so per-trade risk has to fall as
+# trade count rises or the limit stops being a circuit breaker and becomes a
+# routine stop-out.
+#
+#   0.15% of $50k = $75/trade -> 13.3 consecutive losers reach the $1,000 limit
+#   Expected ~10 trades/day at a ~50% win rate -> ~5 losers -> ~$375 worst normal day
+#
+# Keep that ratio above ~4. The dashboard reports it as "losers_to_daily_limit".
+risk:
+  risk_per_trade_pct: 0.15   # V7.1: 0.25
+  max_contracts: 10
+  max_open_positions: 1
+  max_concurrent_positions: 3  # UNCHANGED — 6 concurrent killed the account in 4 days.
+                               # Frequency is sequential; concurrency is correlated.
+                               # These are not the same lever and this one stays put.
+  max_trades_per_day: 3      # V7.1: 0 (ORB self-limited to 1). Per instrument.
+                             # 3 x 6 instruments = 18 theoretical, ~10 real after the
+                             # momentum gate and the concurrency cap.
+
+# --- Session ----------------------------------------------------------------
+# End 15:40, not 15:55: a 1.0R target needs room to travel, and a trade opened at
+# 15:50 can only exit at the flatten — which is a coin flip with costs attached.
+session:
+  enabled: true
+  timezone: "America/New_York"
+  start: "09:36"             # first 1m close after the 09:30-09:35 range
+  end: "15:40"               # V7.1: 15:55
+  flatten_at_end: true
+
+# ============================================================================
+# PROP FIRM COMPLIANCE — identical to V7.1. Hard kill-switches, not suggestions.
+# ============================================================================
+prop_firm:
+  name: "Topstep"
+  account_size: 50000.0
+  daily_loss_limit: 1000.0
+  trailing_drawdown: 2000.0
+  trailing_basis: "eod_balance"
+  lock_at_start_balance: true
+  profit_target: 3000.0
+  min_trading_days: 2
+
+# --- Backtest realism --------------------------------------------------------
+# Do NOT lower these to make this config look viable. If it only works at
+# 0 slippage it does not work. If anything, 1 tick is optimistic for a stop-out
+# in a fast tape, which is exactly when stops get hit.
+backtest:
+  commission_per_contract: 1.24
+  slippage_ticks: 1
+  data_source: "csv"
+  csv_path: "data/real_MES_1m.csv"   # 1m, not the 5m file V7.1 uses
+  resample: null                     # keep native 1m
+  yf_symbol: "MES=F"
+  yf_period: "60d"
+  yf_interval: "1m"                  # yfinance caps 1m at ~7 days — not enough.
+                                     # This config needs databento/polygon 1m.
+  databento:
+    dataset: "GLBX.MDP3"
+    roll: "v"
+    schema: "ohlcv-1m"
+    start: "2021-01-01"
+    end: "2024-12-31"
+    allow_download: false
+    cache_csv: "data/cache/databento_mes_1m.csv"
+  polygon:
+    start: "2021-01-01"
+    end: "2024-12-31"
+    multiplier: 1
+    timespan: "minute"
+    roll_days_before: 8
+    cache_csv: "data/cache/polygon_mes_1m.csv"
+
+# --- Order handling ----------------------------------------------------------
+# Faster re-arming makes a retry storm easier to trigger. The cooldown stays.
+order_handling:
+  max_retries: 2
+  retry_cooldown_sec: 2.0
+
+execution:
+  mode: "demo"
+  venue: "tradovate"
+  is_automated: true
+  live:
+    enabled: false
+    i_understand_the_risk: false
+
+# ============================================================================
+# NOT YET SUPPORTED BY THE ENGINE — commented out so this file still loads.
+# Each of these is a real gap that higher frequency opens up. Implement them in
+# src/ before this config runs anywhere near money.
+# ============================================================================
+#
+# stop:
+#   # min_stop_ticks is global, but friction per tick is not: a round turn is
+#   # ~4 ticks on MES and ~7 on MNQ/M2K/MYM. One global floor is either too loose
+#   # for the cheap-tick contracts or too strict for MES.
+#   min_stop_ticks_by_symbol:
+#     MES: 40
+#     MNQ: 70
+#     M2K: 70
+#     MGC: 45
+#     MCL: 45
+#     MYM: 70
+#
+# risk:
+#   # Re-arming after every exit is how a trend day turns into six stop-outs in
+#   # the same 40-point chop. A cooldown and a consecutive-loss cutoff are the
+#   # two cheapest defences and neither exists yet.
+#   reentry_cooldown_min: 15        # per instrument, after any exit
+#   max_consecutive_losses: 3       # per instrument per day, then stand down
+#   daily_loss_soft_stop_pct: 60    # halt new entries at 60% of the daily limit,
+#                                   # so the hard limit is never the thing that stops you

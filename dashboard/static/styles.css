@@ -1,0 +1,104 @@
+:root {
+  --bg: #0d1117;
+  --panel: #151b23;
+  --panel-2: #1c242e;
+  --line: #263141;
+  --text: #e6edf3;
+  --muted: #8b98a8;
+  --accent: #58a6ff;
+  --up: #3fb950;
+  --down: #f85149;
+  --warn: #d29922;
+  --radius: 10px;
+  font-synthesis-weight: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 16px 64px; }
+
+header.top {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+  justify-content: space-between; margin-bottom: 6px;
+}
+header.top h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+header.top h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+  white-space: nowrap;
+}
+.badge.ok   { color: var(--up);   border-color: #1d572c; background: #10231a; }
+.badge.warn { color: var(--warn); border-color: #5c4408; background: #241d0c; }
+.badge.bad  { color: var(--down); border-color: #6e2b28; background: #2a1614; }
+
+.notice {
+  margin: 14px 0; padding: 10px 14px; border-radius: var(--radius);
+  border: 1px solid #5c4408; background: #241d0c; color: #f0d08a; font-size: 13px;
+}
+.notice.err { border-color: #6e2b28; background: #2a1614; color: #ffb4ae; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+.controls > * { min-width: 0; max-width: 100%; }
+.controls label { color: var(--muted); font-size: 12px; }
+select, input[type="date"], button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+
+.grid { display: grid; gap: 12px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); }
+/* min() keeps the track from forcing a 420px floor on a narrower screen. */
+.cols-2 { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin: 0 0 10px; font-weight: 600;
+}
+.card .hint { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+
+.kpi .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.kpi .value { font-size: 24px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.kpi .sub { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.up { color: var(--up); } .down { color: var(--down); } .warn { color: var(--warn); } .muted { color: var(--muted); }
+
+canvas { width: 100%; height: auto; display: block; }
+.chart-box { position: relative; }
+
+.meter { margin-bottom: 12px; }
+.meter .row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+.meter .row .r { font-variant-numeric: tabular-nums; }
+.meter .track { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.meter .fill { height: 100%; border-radius: 999px; transition: width .3s ease; }
+
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; position: sticky; top: 0; background: var(--panel); }
+th:first-child, td:first-child { text-align: left; }
+tbody tr:hover { background: var(--panel-2); }
+.tall { max-height: 460px; overflow-y: auto; }
+
+.empty { color: var(--muted); padding: 24px; text-align: center; font-size: 13px; }
+
+footer { color: var(--muted); font-size: 12px; margin-top: 28px; text-align: center; line-height: 1.7; }
+
+@media (max-width: 560px) {
+  .wrap { padding: 14px 12px 48px; }
+  .kpi .value { font-size: 20px; }
+}

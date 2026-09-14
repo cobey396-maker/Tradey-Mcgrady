@@ -17,3 +17,7 @@ pydantic>=2.6
 requests>=2.31            # Tradovate REST (verified against docs 2026-07-13)
 python-dotenv>=1.0
 httpx>=0.27              # used by fastapi TestClient in the server tests
+
+# --- Dashboard (run_dashboard.py) ---
+# No extra runtime deps: it reuses fastapi + uvicorn above, and its stats layer
+# is stdlib only. The frontend has no build step and no CDN.
