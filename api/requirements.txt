@@ -1,0 +1,11 @@
+# Dependencies for the Vercel deployment ONLY — deliberately minimal.
+#
+# The root requirements.txt pulls in pandas, matplotlib and yfinance for the
+# backtest engine. None of that is reachable from the dashboard: its stats layer
+# is standard-library only. Installing them here would bloat the function bundle
+# and slow every cold start for no benefit.
+#
+# @vercel/python prefers a requirements.txt adjacent to the entrypoint; if it
+# falls back to the root file the deploy still works, just slower to build.
+fastapi>=0.110
+PyYAML>=6.0
