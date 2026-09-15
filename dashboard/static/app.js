@@ -61,6 +61,79 @@ const scaleY = (v, yMin, yMax, h) =>
   PAD.t + (h - PAD.t - PAD.b) * (1 - (v - yMin) / ((yMax - yMin) || 1));
 const scaleX = (i, n, w) => PAD.l + ((w - PAD.l - PAD.r) * i) / Math.max(1, n - 1);
 
+/* ---------- hover layer ----------
+   Each draw function registers a hit-tester here; one generic listener per
+   canvas turns a pointer position into a tooltip. Charts stay pure drawing
+   functions, and adding a new one costs a single `register()` call. */
+const CHARTS = {};
+
+function register(canvas, hit) {
+  CHARTS[canvas.id] = { hit, canvas };
+  if (canvas.dataset.hoverBound) return;
+  canvas.dataset.hoverBound = "1";
+
+  const box = canvas.parentElement;                 // .chart-box is position:relative
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  box.appendChild(tip);
+
+  const move = (e) => {
+    const entry = CHARTS[canvas.id];
+    if (!entry || !entry.hit) return;
+    const r = canvas.getBoundingClientRect();
+    const px = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const out = entry.hit(px, r.width);
+    if (!out) { tip.classList.remove("on"); canvas.classList.remove("hot"); return; }
+
+    tip.innerHTML = out.html;
+    tip.classList.add("on");
+    canvas.classList.add("hot");
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.max(0, Math.min(r.width - tw, out.x - tw / 2)) + "px";
+    tip.style.top = Math.max(2, out.y - th - 12) + "px";
+
+    // Crosshair is drawn on a second pass so it never pollutes the base render.
+    if (out.x != null) {
+      const { ctx } = lastFrame(canvas);
+      if (ctx) {
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "rgba(139,152,168,0.55)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(out.x, PAD.t);
+        ctx.lineTo(out.x, canvas.clientHeight - PAD.b);
+        ctx.stroke();
+        if (out.y != null) {
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(out.x, out.y, 4.5, 0, 7);
+          ctx.fillStyle = out.dot || "#58a6ff";
+          ctx.fill();
+          ctx.strokeStyle = "#151b23";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+  };
+
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerleave", () => {
+    tip.classList.remove("on");
+    canvas.classList.remove("hot");
+    redraw(canvas);                                  // wipe the crosshair
+  });
+}
+
+/* Charts are re-rendered from a stored closure so the crosshair can be cleared
+   without refetching. Cheaper than a full refresh() and it keeps hover snappy. */
+const REDRAW = {};
+function remember(canvas, fn) { REDRAW[canvas.id] = fn; fn(); }
+function redraw(canvas) { const f = REDRAW[canvas.id]; if (f) f(); }
+function lastFrame(canvas) { return { ctx: canvas.getContext("2d") }; }
+
 function emptyChart(canvas, msg) {
   const { ctx, w, h } = setupCanvas(canvas);
   ctx.fillStyle = "#8b98a8";
@@ -104,11 +177,31 @@ function drawEquity(canvas, points) {
   line("floor", "#f85149", 1.5, [5, 4]);
   line("equity", "#58a6ff", 2);
 
+  // Emphasised endpoint — the eye goes to "where am I now".
+  const eX = scaleX(points.length - 1, points.length, w);
+  const eY = scaleY(points[points.length - 1].equity, lo, hi, h);
+  ctx.beginPath(); ctx.arc(eX, eY, 4, 0, 7); ctx.fillStyle = "#58a6ff"; ctx.fill();
+  ctx.strokeStyle = "#151b23"; ctx.lineWidth = 2; ctx.stroke();
+
   ctx.fillStyle = "#8b98a8"; ctx.textAlign = "left";
   ctx.fillText(`${points.length - 1} closed trades`, PAD.l + 4, h - 8);
   ctx.textAlign = "right";
   ctx.fillStyle = "#f85149";
   ctx.fillText("trailing floor", w - PAD.r, h - 8);
+
+  register(canvas, (px, cw) => {
+    const i = Math.max(0, Math.min(points.length - 1,
+      Math.round((px - PAD.l) / ((cw - PAD.l - PAD.r) / (points.length - 1)))));
+    const d = points[i];
+    if (!d || !d.t) return null;
+    return {
+      x: scaleX(i, points.length, cw), y: scaleY(d.equity, lo, hi, h), dot: "#58a6ff",
+      html: `<b>${d.t.replace("T", " ").slice(0, 16)}</b><br>`
+          + `${d.label} <span class="${cls(d.pnl)}">${fmtUSD(d.pnl, 2)}</span><br>`
+          + `equity ${fmtUSD(d.equity)} &middot; floor ${fmtUSD(d.floor)}<br>`
+          + `<b>headroom</b> ${fmtUSD(d.equity - d.floor)}`,
+    };
+  });
 }
 
 function drawHistogram(canvas, bins) {
@@ -128,6 +221,20 @@ function drawHistogram(canvas, bins) {
       ctx.fillStyle = "#8b98a8"; ctx.textAlign = "center";
       ctx.fillText(b.r.toFixed(2) + "R", x + bw / 2, h - 10);
     }
+  });
+
+  register(canvas, (px, cw) => {
+    const bw2 = (cw - PAD.l - PAD.r) / bins.length;
+    const i = Math.floor((px - PAD.l) / bw2);
+    if (i < 0 || i >= bins.length) return null;
+    const b = bins[i];
+    const slip = b.r < -1.001 ? '<br><span class="down">past the stop \u2014 slippage</span>' : "";
+    return {
+      x: PAD.l + (i + 0.5) * bw2, y: scaleY(b.count, 0, hi, h),
+      dot: b.r < 0 ? "#f85149" : "#3fb950",
+      html: `<b>${b.r.toFixed(2)}R to ${(b.r + 0.25).toFixed(2)}R</b><br>`
+          + `${b.count} trade${b.count === 1 ? "" : "s"}${slip}`,
+    };
   });
 }
 
@@ -153,6 +260,28 @@ function drawRolling(canvas, rolling, breakeven) {
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 2; ctx.stroke();
+
+  const lastR = rolling[rolling.length - 1];
+  const rX = scaleX(rolling.length - 1, rolling.length, w);
+  const rY = scaleY(lastR.win_rate, lo, hi, h);
+  ctx.beginPath(); ctx.arc(rX, rY, 4, 0, 7);
+  ctx.fillStyle = lastR.win_rate >= breakeven ? "#3fb950" : "#f85149"; ctx.fill();
+  ctx.strokeStyle = "#151b23"; ctx.lineWidth = 2; ctx.stroke();
+
+  register(canvas, (px, cw) => {
+    const i = Math.max(0, Math.min(rolling.length - 1,
+      Math.round((px - PAD.l) / ((cw - PAD.l - PAD.r) / (rolling.length - 1)))));
+    const d = rolling[i];
+    const over = d.win_rate - breakeven;
+    return {
+      x: scaleX(i, rolling.length, cw), y: scaleY(d.win_rate, lo, hi, h),
+      dot: over >= 0 ? "#3fb950" : "#f85149",
+      html: `<b>through trade ${d.i}</b> &middot; ${d.t.slice(0, 10)}<br>`
+          + `win rate ${d.win_rate.toFixed(1)}% &middot; ${d.expectancy_r.toFixed(3)}R<br>`
+          + `<span class="${over >= 0 ? "up" : "down"}">`
+          + `${over >= 0 ? "+" : ""}${over.toFixed(1)} pts vs breakeven</span>`,
+    };
+  });
 }
 
 function drawDaily(canvas, days, limit) {
@@ -180,6 +309,23 @@ function drawDaily(canvas, days, limit) {
   });
   ctx.strokeStyle = "#8b98a8"; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(PAD.l, zero); ctx.lineTo(w - PAD.r, zero); ctx.stroke();
+
+  register(canvas, (px, cw) => {
+    const bw2 = (cw - PAD.l - PAD.r) / days.length;
+    const i = Math.floor((px - PAD.l) / bw2);
+    if (i < 0 || i >= days.length) return null;
+    const d = days[i];
+    const lock = d.limit_breached
+      ? '<br><span class="down">daily limit breached \u2014 locked out</span>' : "";
+    return {
+      x: PAD.l + (i + 0.5) * bw2, y: scaleY(Math.max(0, d.pnl), lo, hi, h),
+      dot: d.pnl >= 0 ? "#3fb950" : "#f85149",
+      html: `<b>${d.date}</b><br>`
+          + `<span class="${cls(d.pnl)}">${fmtUSD(d.pnl, 2)}</span> on ${d.trades} trade`
+          + `${d.trades === 1 ? "" : "s"} (${d.wins}W)<br>`
+          + `limit used ${fmtPct(d.limit_used_pct)}${lock}`,
+    };
+  });
 }
 
 function drawWinrateBar(canvas, actual, be, beFriction) {
@@ -266,6 +412,7 @@ function renderOverview(o) {
   ];
   $("#kpis").innerHTML = kpis.map(([l, v, sub]) =>
     `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
+  if (!state.counted) { state.counted = true; countUp(); }
 
   // Risk meters
   const headroomPct = 100 * (p.current_headroom / p.trailing_drawdown);
@@ -366,10 +513,13 @@ async function refresh() {
     ]);
 
     const breakeven = renderOverview(o);
-    drawEquity($("#c-equity"), eq.points);
-    drawHistogram($("#c-rhist"), freq.r_histogram);
-    drawRolling($("#c-rolling"), eq.rolling, fr.breakeven_win_rate_with_friction);
-    drawDaily($("#c-daily"), eq.days, eq.daily_loss_limit);
+    // remember() stores the render so pointerleave can wipe the crosshair
+    // without another fetch.
+    remember($("#c-equity"),  () => drawEquity($("#c-equity"), eq.points));
+    remember($("#c-rhist"),   () => drawHistogram($("#c-rhist"), freq.r_histogram));
+    remember($("#c-rolling"), () => drawRolling($("#c-rolling"), eq.rolling,
+                                                fr.breakeven_win_rate_with_friction));
+    remember($("#c-daily"),   () => drawDaily($("#c-daily"), eq.days, eq.daily_loss_limit));
     renderTables(freq, fr, tr.trades);
 
     $("#rolling-hint").innerHTML =
@@ -385,10 +535,44 @@ async function refresh() {
       fr.per_symbol.map((s) => s.symbol).sort().forEach((s) => sel.add(new Option(s, s)));
       sel.value = state.symbol;
     }
-    $("#updated").textContent = "updated " + new Date().toLocaleTimeString();
+    $("#updated").innerHTML = '<i class="dot"></i>updated ' + new Date().toLocaleTimeString();
+    pulse();
   } catch (err) {
     $("#notices").innerHTML = `<div class="notice err"><strong>Could not load data:</strong> ${err.message}</div>`;
   }
+}
+
+/* Roll the headline figures up on first paint. Purely cosmetic, so it is
+   skipped entirely when the viewer has asked for reduced motion. */
+function countUp() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  document.querySelectorAll("#kpis .value").forEach((el) => {
+    const final = el.textContent;
+    const m = final.match(/-?[\d,]+\.?\d*/);
+    if (!m) return;
+    const target = parseFloat(m[0].replace(/,/g, ""));
+    if (!isFinite(target) || Math.abs(target) < 1) return;
+    const dp = (m[0].split(".")[1] || "").length;
+    const t0 = performance.now(), DUR = 620;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / DUR);
+      const eased = 1 - Math.pow(1 - k, 3);        // ease-out cubic
+      const val = (target * eased).toLocaleString("en-US",
+        { minimumFractionDigits: dp, maximumFractionDigits: dp });
+      el.textContent = final.replace(m[0], val);
+      if (k < 1) requestAnimationFrame(step); else el.textContent = final;
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/* A brief flash on the refresh stamp: makes a silent 15s poll visible, so the
+   page reads as connected rather than frozen. */
+function pulse() {
+  const el = $("#updated");
+  el.classList.remove("beat");
+  void el.offsetWidth;                              // restart the animation
+  el.classList.add("beat");
 }
 
 function setAuto(on) {
