@@ -102,3 +102,67 @@ footer { color: var(--muted); font-size: 12px; margin-top: 28px; text-align: cen
   .wrap { padding: 14px 12px 48px; }
   .kpi .value { font-size: 20px; }
 }
+
+/* ============================================================
+   Interaction layer
+   Hover is the only affordance a read-only dashboard has, so the
+   charts carry it: a crosshair, a highlighted point, and a tooltip.
+   ============================================================ */
+
+/* Tooltip — created by register() inside each .chart-box */
+.tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  opacity: 0; transform: translateY(3px);
+  transition: opacity .12s ease, transform .12s ease;
+  background: #0a0d12; border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; white-space: nowrap; font-size: 12px; line-height: 1.55;
+  color: var(--text); font-variant-numeric: tabular-nums;
+  box-shadow: 0 6px 18px rgba(0,0,0,.45);
+}
+.tip.on { opacity: 1; transform: translateY(0); }
+canvas.hot { cursor: crosshair; }
+
+/* Cards lift slightly on hover — enough to read as interactive, not enough
+   to shift the layout. */
+.card { transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
+.card:hover { border-color: #33415a; }
+.kpi { cursor: default; }
+.kpi:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.35); }
+.kpi .value { transition: color .2s ease; }
+
+/* Table rows: a left accent marks the row under the cursor without a reflow. */
+tbody tr { transition: background .12s ease, box-shadow .12s ease; }
+tbody tr:hover { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Controls */
+button { transition: border-color .15s ease, color .15s ease, background .15s ease; }
+button:hover { background: var(--raise, #222b36); color: var(--text); }
+button:active { transform: translateY(1px); }
+select, input[type="date"] { transition: border-color .15s ease; }
+select:hover, input[type="date"]:hover { border-color: var(--ink-3, #55627a); }
+
+/* Live indicator on the refresh stamp */
+#updated { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+#updated .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--up); flex: none;
+  box-shadow: 0 0 0 0 rgba(63,185,80,.55);
+}
+#updated.beat .dot { animation: ping 1.4s ease-out 1; }
+@keyframes ping {
+  0%   { box-shadow: 0 0 0 0 rgba(63,185,80,.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(63,185,80,0); }
+  100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); }
+}
+
+/* Badges and meters settle in rather than snapping */
+.badge { transition: border-color .18s ease, background .18s ease; }
+.meter .fill { transition: width .45s cubic-bezier(.22,.61,.36,1); }
+
+/* Honour the system preference — every effect above is decoration. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .kpi:hover { transform: none; }
+}
